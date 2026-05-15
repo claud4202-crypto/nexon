@@ -172,6 +172,7 @@
         <input id="nickname-input" type="text" maxlength="20" placeholder="Player" autocomplete="off" spellcheck="false">
         <span class="hint mono" id="nick-count">0/20</span>
       </div>
+      <div id="nick-error" class="nick-error" style="display:none;color:#ff6b6b;font-size:12px;margin:6px 4px 0;text-align:left"></div>
       <div class="login-actions">
         <button class="btn btn-primary btn-block" id="login-confirm">
           <svg class="ic-svg lg"><use href="#i-check"/></svg>
@@ -264,7 +265,11 @@
             <svg class="ic-svg lg"><use href="#i-settings"/></svg>
             <span data-i18n="tab.settings">Settings</span>
           </button>
-          <button class="menu-tile glass menu-tile-exit" id="menu-exit" style="--i:8">
+          <button class="menu-tile glass menu-tile-admin" id="menu-tile-admin" data-go="admin" style="--i:8;display:none">
+            <svg class="ic-svg lg"><use href="#i-lock"/></svg>
+            <span data-i18n="tab.admin">Admin</span>
+          </button>
+          <button class="menu-tile glass menu-tile-exit" id="menu-exit" style="--i:9">
             <svg class="ic-svg lg"><use href="#i-door"/></svg>
             <span data-i18n="menu.exit">Exit</span>
           </button>
@@ -574,6 +579,21 @@
       </div>
     </section>
 
+    <!-- ============ ADMIN SCREEN ============ -->
+    <section class="screen admin-screen" data-screen="admin">
+      <header class="screen-head">
+        <button class="btn-back" data-go="menu">
+          <svg class="ic-svg lg"><use href="#i-arrow-left"/></svg>
+          <span data-i18n="nav.menu">Menu</span>
+        </button>
+        <h2 class="screen-title"><svg class="ic-svg lg"><use href="#i-lock"/></svg> <span data-i18n="tab.admin">Admin</span></h2>
+        <span class="chip mono">DEV</span>
+      </header>
+      <div class="scroll-body admin-body" id="admin-body">
+        <!-- Populated by renderAdmin() in scripts/admin.js -->
+      </div>
+    </section>
+
   </div>
 
   <!-- Drag layer -->
@@ -690,6 +710,7 @@
 <script src="scripts/leaderboard.js"></script>
 <script src="scripts/dropdown.js"></script>
 <script src="scripts/shop.js"></script>
+<script src="scripts/admin.js"></script>
 <script src="scripts/ui.js"></script>
 <script src="scripts/main.js"></script>
 

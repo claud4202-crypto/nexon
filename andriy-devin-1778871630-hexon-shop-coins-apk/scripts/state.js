@@ -31,6 +31,12 @@ const state = {
      contains "default" so the user never loses their pieces. */
   shop: { ownedSkins: ["default"], activeSkin: "default" },
 
+  /* Admin-only flags. `enabled` flips to true after the user logs in
+     with the secret nickname "@admin"; once on, an extra "Admin" tile
+     appears in the main menu. `noGameOver` is a debug/cheat toggle
+     that short-circuits the game-over check inside game.js. */
+  admin: { enabled: false, noGameOver: false },
+
   // live, not persisted
   run: null,
 };

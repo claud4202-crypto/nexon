@@ -100,6 +100,7 @@ function saveState(){
       wallet: state.wallet,
       daily: state.daily,
       shop: state.shop,
+      admin: state.admin,
       run: null, // not persisted across reloads (live game state)
     };
     localStorage.setItem(STORE_KEY, JSON.stringify(copy));

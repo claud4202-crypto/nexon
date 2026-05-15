@@ -77,6 +77,7 @@ function init() {
     if (persisted.wallet) state.wallet = Object.assign(state.wallet, persisted.wallet);
     if (persisted.daily)  state.daily  = Object.assign(state.daily,  persisted.daily);
     if (persisted.shop)   state.shop   = Object.assign(state.shop,   persisted.shop);
+    if (persisted.admin)  state.admin  = Object.assign(state.admin,  persisted.admin);
   }
   /* Always restore the permanent ID, overriding any persisted value
      (which may have been a one-off random generated before deviceId
@@ -112,15 +113,71 @@ function init() {
   // bind login
   const nickInput = $("#nickname-input");
   const nickCount = $("#nick-count");
+  const nickError = $("#nick-error");
+  const loginBtn  = $("#login-confirm");
   if (state.profile.nickname) {
     nickInput.value = state.profile.nickname;
     nickCount.textContent = state.profile.nickname.length + "/20";
   }
+  function validateNickInput() {
+    const raw  = (nickInput.value || "").trim();
+    const norm = raw.toLowerCase();
+    /* The "@admin" trigger is allowed as input — it flips on admin
+       mode and is then replaced with the real nickname. Skip the
+       uniqueness check for it so the user can always type it. */
+    if (norm === "@admin") {
+      if (nickError) { nickError.style.display = "none"; nickError.textContent = ""; }
+      loginBtn.disabled = false;
+      return true;
+    }
+    if (!raw) {
+      if (nickError) { nickError.style.display = "none"; nickError.textContent = ""; }
+      loginBtn.disabled = false; // empty = default to "Player"
+      return true;
+    }
+    if (typeof isNicknameTaken === "function" && isNicknameTaken(raw)) {
+      if (nickError) {
+        nickError.textContent = (typeof t === "function" ? t("login.taken") : "Nickname already taken");
+        nickError.style.display = "";
+      }
+      loginBtn.disabled = true;
+      return false;
+    }
+    if (nickError) { nickError.style.display = "none"; nickError.textContent = ""; }
+    loginBtn.disabled = false;
+    return true;
+  }
   nickInput.addEventListener("input", () => {
     nickCount.textContent = nickInput.value.length + "/20";
+    validateNickInput();
   });
-  $("#login-confirm").addEventListener("click", () => {
-    const name = (nickInput.value || "").trim() || "Player";
+  loginBtn.addEventListener("click", () => {
+    if (!validateNickInput()) return;
+    const raw  = (nickInput.value || "").trim();
+    const norm = raw.toLowerCase();
+
+    /* Admin trigger: typing "@admin" flips the flag, clears the
+       input and asks the user for a real visible nickname. The
+       admin-flag is saved immediately so the next confirm carries
+       it through. */
+    if (norm === "@admin") {
+      state.admin = state.admin || { enabled: false, noGameOver: false };
+      state.admin.enabled = true;
+      saveState();
+      nickInput.value = "";
+      nickCount.textContent = "0/20";
+      nickInput.placeholder = (typeof t === "function" ? t("login.admin.hint") : "Admin mode on — enter your visible nickname");
+      if (nickError) {
+        nickError.textContent = (typeof t === "function" ? t("login.admin.toast") : "Admin mode enabled. Enter your visible nickname.");
+        nickError.style.display = "";
+        nickError.style.color = "var(--accent)";
+      }
+      toast(typeof t === "function" ? t("login.admin.toast") : "Admin mode enabled", "success");
+      nickInput.focus();
+      return;
+    }
+
+    const name = raw || "Player";
     state.profile.nickname = name.slice(0, 20);
     /* The ID is fixed by loadDeviceId(); never overwrite it. */
     if (!state.profile.id) state.profile.id = loadDeviceId();
@@ -131,6 +188,7 @@ function init() {
     toast(t("toast.welcome", { name: state.profile.nickname }), "success");
   });
   nickInput.addEventListener("keydown", e => { if (e.key === "Enter") $("#login-confirm").click(); });
+  validateNickInput();
 
   // auto-resume if already registered
   if (state.profile.nickname && state.profile.id) {
@@ -196,6 +254,7 @@ function enterApp() {
   startGame();
   bindAppEvents();
   refreshAllUI();
+  if (typeof applyAdminVisibility === "function") applyAdminVisibility();
   // Stats avg uses totalScoreFromGames — backfill if missing
   if (typeof state.stats.totalScoreFromGames !== "number") {
     state.stats.totalScoreFromGames = (state.stats.best || 0); // best-effort
@@ -209,17 +268,23 @@ function enterApp() {
    settings, tasks, stats, profile, leaderboards, achievements)
    is its own full-viewport screen. */
 function go(screen) {
+  /* Guard the admin screen behind the admin flag so a stale
+     direct-navigation can't sneak around the menu-tile hide. */
+  if (screen === "admin" && !(state.admin && state.admin.enabled)) {
+    screen = "menu";
+  }
   const target = document.querySelector('[data-screen="' + screen + '"]');
   if (!target) return;
   $$(".screen").forEach(s => s.classList.toggle("active", s.dataset.screen === screen));
   currentScreen = screen;
   // refresh data when entering a section
-  if (screen === "menu") renderMenu();
+  if (screen === "menu") { renderMenu(); if (typeof applyAdminVisibility === "function") applyAdminVisibility(); }
   if (screen === "stats") renderStats();
   if (screen === "profile") renderProfile();
   if (screen === "tasks") renderTasks();
   if (screen === "leaderboards") renderLeaderboards();
   if (screen === "achievements") renderAchievements();
+  if (screen === "admin") { if (typeof renderAdmin === "function") renderAdmin(); }
   if (screen === "shop") {
     if (typeof sfx !== "undefined") sfx.shopOpen();
     renderShop();

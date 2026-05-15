@@ -596,9 +596,22 @@ function placePiece(idx, br, bc){
   refreshSideTasks();
   saveState();
 
-  // game over check
+  // game over check (skipped while the admin "no game over" cheat is on)
+  const noGO = !!(state.admin && state.admin.enabled && state.admin.noGameOver);
   if(!anyPieceFits()){
-    setTimeout(endGame, 480);
+    if(noGO){
+      /* Cheat: when the player would normally lose, reroll the
+         tray until at least one piece fits the current board.
+         Capped at 10 retries so a fully packed board still
+         eventually triggers a normal game-over instead of hanging. */
+      for(let i=0;i<10 && !anyPieceFits();i++){
+        state.run.pieces = genPieces();
+      }
+      renderTray();
+      if(!anyPieceFits()) setTimeout(endGame, 480);
+    } else {
+      setTimeout(endGame, 480);
+    }
   }
 }
 

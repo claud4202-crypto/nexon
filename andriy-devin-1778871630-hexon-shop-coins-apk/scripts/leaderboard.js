@@ -1,5 +1,43 @@
 /* ---------- Leaderboards (simulated) ---------- */
 const FAKE_NAMES = ["Nova","Kairo","Akira","Sora","Lumen","Vega","Orion","Zephyr","Mira","Iris","Kai","Rune","Sage","Echo","Lyra","Pax","Onyx","Atlas","Lux","Nyx","Cyra","Polaris","Hex","Tao","Juno","Astrid","Selene","Cassio","Calix","Helios","Aether","Vesper","Ronin","Saoirse","Aurel","Sable","Thal","Nikko","Reza","Mika","Ezra","Ines","Lior","Maya","Niko","Yuna","Zara","Liyo","Aria","Bex"];
+
+/* Reserved nicknames the player can't pick (admin triggers, system
+   words, etc.). Compared case-insensitively. */
+const RESERVED_NICKS = [
+  "admin","administrator","root","system","hexon","hexon beta","beta",
+  "moderator","mod","gm","support","staff","player","developer","dev",
+  "owner","null","undefined","none","bot","official","cheater","hacker",
+];
+
+/* Return true when `nick` matches an existing player on the
+   leaderboard (real or simulated) or a reserved system word. The
+   current user's own nickname is allowed (so reopening the login
+   screen with their saved name keeps Confirm enabled). Comparison
+   is case-insensitive and ignores surrounding whitespace. */
+function isNicknameTaken(nick){
+  const n = (nick || "").trim().toLowerCase();
+  if(!n) return false;
+  /* Allow the user to keep their own current nickname. */
+  const me = (state && state.profile && state.profile.nickname || "").toLowerCase();
+  if(n === me) return false;
+
+  if(RESERVED_NICKS.indexOf(n) !== -1) return true;
+  if(n.indexOf("@admin") === 0) return true; // covers @admin* variants
+
+  /* Match against the seeded leaderboard pool. We have to bake the
+     same trailing-number scheme buildLeaderboard() uses, because
+     entries like "Nova42" are different players than "Nova". */
+  if(FAKE_NAMES.some(fn => fn.toLowerCase() === n)) return true;
+
+  /* And against any leaderboard that's already been generated for
+     this session (covers names with the optional trailing digits). */
+  const pool = (state && state.leaderboards) || [];
+  for(let i=0;i<pool.length;i++){
+    const row = pool[i];
+    if(row && !row.me && (row.name||"").toLowerCase() === n) return true;
+  }
+  return false;
+}
 function buildLeaderboard(){
   const seed = hashStr("hexon-leaderboards-v1");
   const rnd = mulberry32(seed);
