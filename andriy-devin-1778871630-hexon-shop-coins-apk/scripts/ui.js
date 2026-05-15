@@ -1,0 +1,522 @@
+/* ============================================================
+   HEXON BETA — UI: login, menu, screens, settings, dropdowns
+   ============================================================ */
+"use strict";
+
+/* ---------- Login / Profile setup ---------- */
+function showLogin() {
+  $("#login-screen").style.display = "";
+  $("#app").style.display = "none";
+}
+function showApp() {
+  $("#login-screen").style.display = "none";
+  $("#app").style.display = "flex";
+}
+function registerLoginDay() {
+  const key = todayKey();
+  state.profile.loginDays = state.profile.loginDays || [];
+  if (!state.profile.loginDays.includes(key)) {
+    state.profile.loginDays.push(key);
+  }
+  state.profile.lastLoginDay = Date.now();
+  evaluateAchievements();
+}
+
+let loginLangDD = null;
+let setLangDD = null;
+let currentScreen = "menu";
+
+/* ---------- Device profile ---------- */
+const DEVICE_OPTIONS = ["pc", "laptop", "tablet", "phone"];
+
+function detectDevice() {
+  const w = window.innerWidth;
+  const ua = (navigator.userAgent || "").toLowerCase();
+  const touch = matchMedia("(pointer: coarse)").matches;
+  if (/ipad|tablet|playbook|silk/.test(ua) || (touch && w >= 720)) return "tablet";
+  if (/iphone|ipod|android.*mobile|mobile/.test(ua) || (touch && w < 720)) return "phone";
+  if (w >= 1280) return "pc";
+  return "laptop";
+}
+
+function effectiveDevice() {
+  const v = state.settings.device || "auto";
+  return v === "auto" ? detectDevice() : v;
+}
+
+function applyDeviceProfile(device, opts) {
+  const final = device === "auto" ? detectDevice() : device;
+  document.documentElement.setAttribute("data-device", final);
+  document.documentElement.setAttribute("data-device-setting", device);
+  if (opts && opts.toast) {
+    toast(t("toast.device", { device: t("device." + final) }), "info");
+  }
+}
+
+function onResizeMaybeApplyDevice() {
+  if ((state.settings.device || "auto") === "auto") {
+    applyDeviceProfile("auto");
+  }
+}
+
+function init() {
+  /* The device ID is *separate* from the rest of the state on purpose:
+     it must survive Reset Progress and Sign Out so every player has
+     exactly one stable ID for the lifetime of the install. */
+  const deviceId = loadDeviceId();
+
+  const persisted = loadState();
+  if (persisted) {
+    Object.assign(state.profile, persisted.profile || {});
+    Object.assign(state.stats, persisted.stats || {});
+    Object.assign(state.settings, persisted.settings || {});
+    state.hidden = Object.assign({}, state.hidden, persisted.hidden || {});
+    state.dailyTasks = persisted.dailyTasks || state.dailyTasks;
+    state.achievements = new Set(persisted.achievements || []);
+    state.leaderboards = persisted.leaderboards || [];
+    if (persisted.wallet) state.wallet = Object.assign(state.wallet, persisted.wallet);
+    if (persisted.daily)  state.daily  = Object.assign(state.daily,  persisted.daily);
+    if (persisted.shop)   state.shop   = Object.assign(state.shop,   persisted.shop);
+    if (persisted.admin)  state.admin  = Object.assign(state.admin,  persisted.admin);
+  }
+  /* Always restore the permanent ID, overriding any persisted value
+     (which may have been a one-off random generated before deviceId
+     existed). */
+  state.profile.id = deviceId;
+  // theme & lang
+  document.documentElement.setAttribute("data-theme", state.settings.theme || "dark");
+  /* Surface the equipped skin to CSS so the per-skin textures in
+     styles/skins.css apply from the very first paint (login screen,
+     shop swatches, the in-game board). */
+  if (typeof applyActiveSkin === "function") applyActiveSkin();
+  applyDeviceProfile(state.settings.device || "auto");
+  window.addEventListener("resize", onResizeMaybeApplyDevice, { passive: true });
+
+  // Build login lang dropdown
+  loginLangDD = buildLangDropdown($("#login-lang-dropdown"), {
+    value: state.settings.lang || "uk",
+    onChange: (code) => {
+      state.settings.lang = code;
+      applyI18n();
+      saveState();
+    },
+  });
+
+  // Apply i18n
+  applyI18n();
+
+  // Build the device picker on the login screen. Each chip pins a
+  // layout density; the "remember" toggle controls whether the choice
+  // is restored next time we hit the login screen.
+  setupLoginDevicePicker();
+
+  // bind login
+  const nickInput = $("#nickname-input");
+  const nickCount = $("#nick-count");
+  const nickError = $("#nick-error");
+  const loginBtn  = $("#login-confirm");
+  if (state.profile.nickname) {
+    nickInput.value = state.profile.nickname;
+    nickCount.textContent = state.profile.nickname.length + "/20";
+  }
+  function validateNickInput() {
+    const raw  = (nickInput.value || "").trim();
+    const norm = raw.toLowerCase();
+    /* The "@admin" trigger is allowed as input — it flips on admin
+       mode and is then replaced with the real nickname. Skip the
+       uniqueness check for it so the user can always type it. */
+    if (norm === "@admin") {
+      if (nickError) { nickError.style.display = "none"; nickError.textContent = ""; }
+      loginBtn.disabled = false;
+      return true;
+    }
+    if (!raw) {
+      if (nickError) { nickError.style.display = "none"; nickError.textContent = ""; }
+      loginBtn.disabled = false; // empty = default to "Player"
+      return true;
+    }
+    if (typeof isNicknameTaken === "function" && isNicknameTaken(raw)) {
+      if (nickError) {
+        nickError.textContent = (typeof t === "function" ? t("login.taken") : "Nickname already taken");
+        nickError.style.display = "";
+      }
+      loginBtn.disabled = true;
+      return false;
+    }
+    if (nickError) { nickError.style.display = "none"; nickError.textContent = ""; }
+    loginBtn.disabled = false;
+    return true;
+  }
+  nickInput.addEventListener("input", () => {
+    nickCount.textContent = nickInput.value.length + "/20";
+    validateNickInput();
+  });
+  loginBtn.addEventListener("click", () => {
+    if (!validateNickInput()) return;
+    const raw  = (nickInput.value || "").trim();
+    const norm = raw.toLowerCase();
+
+    /* Admin trigger: typing "@admin" flips the flag, clears the
+       input and asks the user for a real visible nickname. The
+       admin-flag is saved immediately so the next confirm carries
+       it through. */
+    if (norm === "@admin") {
+      state.admin = state.admin || { enabled: false, noGameOver: false };
+      state.admin.enabled = true;
+      saveState();
+      nickInput.value = "";
+      nickCount.textContent = "0/20";
+      nickInput.placeholder = (typeof t === "function" ? t("login.admin.hint") : "Admin mode on — enter your visible nickname");
+      if (nickError) {
+        nickError.textContent = (typeof t === "function" ? t("login.admin.toast") : "Admin mode enabled. Enter your visible nickname.");
+        nickError.style.display = "";
+        nickError.style.color = "var(--accent)";
+      }
+      toast(typeof t === "function" ? t("login.admin.toast") : "Admin mode enabled", "success");
+      nickInput.focus();
+      return;
+    }
+
+    const name = raw || "Player";
+    state.profile.nickname = name.slice(0, 20);
+    /* The ID is fixed by loadDeviceId(); never overwrite it. */
+    if (!state.profile.id) state.profile.id = loadDeviceId();
+    if (!state.profile.registeredAt) state.profile.registeredAt = Date.now();
+    registerLoginDay();
+    saveState();
+    enterApp();
+    toast(t("toast.welcome", { name: state.profile.nickname }), "success");
+  });
+  nickInput.addEventListener("keydown", e => { if (e.key === "Enter") $("#login-confirm").click(); });
+  validateNickInput();
+
+  // auto-resume if already registered
+  if (state.profile.nickname && state.profile.id) {
+    registerLoginDay();
+    enterApp();
+  } else {
+    showLogin();
+  }
+}
+
+function setupLoginDevicePicker() {
+  const grid = $("#login-device-grid");
+  if (!grid) return;
+  // If "remember" is OFF we treat the saved device as "auto" for the
+  // purposes of the picker so the user makes a fresh choice each time.
+  const initial = (state.settings.rememberDevice === false) ? "auto" : (state.settings.device || "auto");
+  paintDeviceGrid(grid, initial, (code) => {
+    state.settings.device = code;
+    applyDeviceProfile(code);
+    saveState();
+    paintDeviceGrid(grid, code);
+  });
+  const rememberBtn = $("#login-remember");
+  if (rememberBtn) {
+    const sync = () => rememberBtn.classList.toggle("on", !!state.settings.rememberDevice);
+    sync();
+    rememberBtn.addEventListener("click", () => {
+      state.settings.rememberDevice = !state.settings.rememberDevice;
+      sync();
+      saveState();
+    });
+  }
+}
+
+function paintDeviceGrid(grid, selected, onPick) {
+  const items = [
+    { code: "pc",     i18n: "device.pc",     icon: "i-monitor"   },
+    { code: "laptop", i18n: "device.laptop", icon: "i-laptop"    },
+    { code: "tablet", i18n: "device.tablet", icon: "i-tablet"    },
+    { code: "phone",  i18n: "device.phone",  icon: "i-smartphone" },
+    { code: "auto",   i18n: "login.detect",  icon: "i-bolt"      },
+  ];
+  if (onPick) grid.innerHTML = "";
+  if (onPick || !grid.children.length) {
+    grid.innerHTML = items.map(it => (
+      '<button class="device-card" data-dev="' + it.code + '" type="button">' +
+      '<svg class="ic-svg"><use href="#' + it.icon + '"/></svg>' +
+      '<span data-i18n="' + it.i18n + '">' + t(it.i18n) + '</span>' +
+      '</button>'
+    )).join("");
+    grid.querySelectorAll(".device-card").forEach(btn => {
+      btn.addEventListener("click", () => onPick && onPick(btn.dataset.dev));
+    });
+  }
+  grid.querySelectorAll(".device-card").forEach(btn => {
+    btn.classList.toggle("on", btn.dataset.dev === selected);
+  });
+}
+
+function enterApp() {
+  showApp();
+  buildBoardDom();
+  startGame();
+  bindAppEvents();
+  refreshAllUI();
+  if (typeof applyAdminVisibility === "function") applyAdminVisibility();
+  // Stats avg uses totalScoreFromGames — backfill if missing
+  if (typeof state.stats.totalScoreFromGames !== "number") {
+    state.stats.totalScoreFromGames = (state.stats.best || 0); // best-effort
+  }
+  // Start at the menu screen by default.
+  go("menu");
+}
+
+/* ---------- Screen navigation ----------
+   Replaces the old tab system. Each navigable area (menu, game,
+   settings, tasks, stats, profile, leaderboards, achievements)
+   is its own full-viewport screen. */
+function go(screen) {
+  /* Guard the admin screen behind the admin flag so a stale
+     direct-navigation can't sneak around the menu-tile hide. */
+  if (screen === "admin" && !(state.admin && state.admin.enabled)) {
+    screen = "menu";
+  }
+  const target = document.querySelector('[data-screen="' + screen + '"]');
+  if (!target) return;
+  $$(".screen").forEach(s => s.classList.toggle("active", s.dataset.screen === screen));
+  currentScreen = screen;
+  // refresh data when entering a section
+  if (screen === "menu") { renderMenu(); if (typeof applyAdminVisibility === "function") applyAdminVisibility(); }
+  if (screen === "stats") renderStats();
+  if (screen === "profile") renderProfile();
+  if (screen === "tasks") renderTasks();
+  if (screen === "leaderboards") renderLeaderboards();
+  if (screen === "achievements") renderAchievements();
+  if (screen === "admin") { if (typeof renderAdmin === "function") renderAdmin(); }
+  if (screen === "shop") {
+    if (typeof sfx !== "undefined") sfx.shopOpen();
+    renderShop();
+  }
+  if (screen === "game") updateHUD();
+}
+
+/* Backwards-compatible alias used by older callers (e.g. game over modal). */
+function activateTab(name) { go(name); }
+
+/* ---------- Menu ---------- */
+function renderMenu() {
+  const name = state.profile.nickname || "Player";
+  const { lvl } = levelInfo(state.stats.xp || 0);
+  $("#menu-avatar").textContent = name.slice(0, 1).toUpperCase();
+  $("#menu-name").textContent = name;
+  $("#menu-level").textContent = lvl;
+  $("#menu-best").textContent = (state.stats.best || 0).toLocaleString();
+  $("#menu-card-best").textContent = (state.stats.best || 0).toLocaleString();
+  $("#menu-card-level").textContent = lvl;
+  /* HEX wallet + daily-available indicator. */
+  if (typeof refreshHexPill === "function") refreshHexPill();
+  if (typeof refreshDailyMenuCta === "function") refreshDailyMenuCta();
+}
+
+/* ---------- App events ---------- */
+function bindAppEvents() {
+  // navigation buttons (menu tiles, play card, back buttons)
+  $$("[data-go]").forEach(btn => {
+    btn.addEventListener("click", () => go(btn.dataset.go));
+  });
+
+  // settings: language dropdown
+  setLangDD = buildLangDropdown($("#set-lang-dropdown"), {
+    value: state.settings.lang || "uk",
+    onChange: (code) => {
+      state.settings.lang = code;
+      applyI18n();
+      renderAllText();
+      saveState();
+      if (loginLangDD) loginLangDD.setValue(code);
+    },
+  });
+
+  // theme
+  document.querySelectorAll("#set-theme button").forEach(b => {
+    if (b.dataset.val === state.settings.theme) b.classList.add("on"); else b.classList.remove("on");
+    b.addEventListener("click", () => {
+      state.settings.theme = b.dataset.val;
+      document.documentElement.setAttribute("data-theme", state.settings.theme);
+      document.querySelectorAll("#set-theme button").forEach(x => x.classList.toggle("on", x.dataset.val === state.settings.theme));
+      saveState();
+    });
+  });
+
+  // sound / vibration
+  const soundBtn = $("#set-sound");
+  soundBtn.classList.toggle("on", !!state.settings.sound);
+  soundBtn.addEventListener("click", () => {
+    state.settings.sound = !state.settings.sound;
+    soundBtn.classList.toggle("on", state.settings.sound);
+    saveState();
+    if (state.settings.sound) sfx.toast();
+  });
+  const vibBtn = $("#set-vibrate");
+  vibBtn.classList.toggle("on", !!state.settings.vibration);
+  vibBtn.addEventListener("click", () => {
+    state.settings.vibration = !state.settings.vibration;
+    vibBtn.classList.toggle("on", state.settings.vibration);
+    saveState();
+    if (state.settings.vibration) vibrate(20);
+  });
+
+  $("#btn-reset-all").addEventListener("click", () => {
+    // Tiny inline confirm using the toast stack — `confirm()` is jarring
+    // inside a WebView. Two clicks within 3s commit the reset.
+    const btn = $("#btn-reset-all");
+    if (btn.dataset.armed === "1") {
+      btn.dataset.armed = "0";
+      /* Reset everything EXCEPT the permanent device ID — the user
+         keeps their stable HX-XXXXX-XXXXX identity for life. */
+      resetProgressKeepDeviceId();
+      location.reload();
+      return;
+    }
+    btn.dataset.armed = "1";
+    btn.classList.add("armed");
+    toast(t("set.reset.sub") + " — " + t("set.reset.btn") + " ?", "warn");
+    setTimeout(() => { btn.dataset.armed = "0"; btn.classList.remove("armed"); }, 3000);
+  });
+
+  // restart
+  $("#btn-restart").addEventListener("click", () => {
+    // count abandoned run into games if score>0
+    if (state.run && state.run.score > 0) {
+      state.stats.games = (state.stats.games || 0) + 1;
+      state.stats.totalScoreFromGames = (state.stats.totalScoreFromGames || 0) + state.run.score;
+      state.stats.totalTimeMs = (state.stats.totalTimeMs || 0) + (Date.now() - state.run.startedAt);
+      bumpDailyTask("games", 1);
+      updateLeaderboardsForMe();
+      evaluateAchievements();
+    }
+    startGame();
+  });
+
+  // how to
+  $("#btn-howto").addEventListener("click", () => openModal("#modal-howto"));
+  $("#howto-close").addEventListener("click", () => closeModal("#modal-howto"));
+  $("#modal-howto").addEventListener("click", e => { if (e.target.id === "modal-howto") closeModal("#modal-howto"); });
+
+  /* Menu Exit: per the user spec, pressing Exit closes the app right
+     away in the .apk via the AndroidHexon JS bridge. In a regular
+     browser we still show the 4-button modal as a fallback because we
+     can't actually close a normal tab without it being a popup. */
+  const inAndroid = !!(window.AndroidHexon && typeof window.AndroidHexon.exit === "function");
+  function performQuit(){
+    state.run = null; saveState();
+    if (inAndroid) {
+      try { window.AndroidHexon.exit(); return; } catch {}
+    }
+    try { window.close(); } catch {}
+    setTimeout(() => { window.location.href = "about:blank"; }, 150);
+  }
+  $("#menu-exit").addEventListener("click", () => {
+    if (inAndroid) { performQuit(); return; }
+    openModal("#modal-exit");
+  });
+  $("#modal-exit").addEventListener("click", e => { if (e.target.id === "modal-exit") closeModal("#modal-exit"); });
+  $("#exit-stay").addEventListener("click", () => { closeModal("#modal-exit"); });
+  $("#exit-pause").addEventListener("click", () => { closeModal("#modal-exit"); go("menu"); });
+  $("#exit-signout").addEventListener("click", () => {
+    /* Sign-out clears the nickname/run only — the device ID survives. */
+    state.profile.nickname = "";
+    state.run = null;
+    saveState();
+    location.reload();
+  });
+  $("#exit-quit").addEventListener("click", performQuit);
+
+  // game over modal
+  // (endGame already records totalScoreFromGames for us, so the
+  //  buttons here just close the modal and reset the run.)
+  $("#m-play-again").addEventListener("click", () => {
+    closeModal("#modal-gameover");
+    startGame();
+    refreshAllUI();
+  });
+  $("#m-menu").addEventListener("click", () => {
+    closeModal("#modal-gameover");
+    startGame();
+    refreshAllUI();
+    go("menu");
+  });
+
+  // achievements filter & search
+  document.querySelectorAll("#ach-filter button").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#ach-filter button").forEach(x => x.classList.remove("on"));
+      b.classList.add("on");
+      achFilter = b.dataset.val;
+      renderAchievements();
+    });
+  });
+  const search = $("#ach-search");
+  search.addEventListener("input", () => {
+    achQuery = search.value;
+    renderAchievements();
+  });
+
+  // logout from the profile screen now also goes through the exit modal
+  $("#btn-logout").addEventListener("click", () => openModal("#modal-exit"));
+
+  // profile: copy ID — click on the badge OR on the dedicated button
+  const copyId = async () => {
+    const id = state.profile.id || "";
+    if (!id) return;
+    try {
+      await navigator.clipboard.writeText(id);
+    } catch {
+      // Fallback for browsers without async clipboard API.
+      const ta = document.createElement("textarea");
+      ta.value = id; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } finally { ta.remove(); }
+    }
+    toast(t("profile.copied"), "success");
+  };
+  const profCopyBtn = $("#prof-copy");
+  const profIdBadge = $("#prof-id");
+  if (profCopyBtn) profCopyBtn.addEventListener("click", copyId);
+  if (profIdBadge) profIdBadge.addEventListener("click", copyId);
+
+  // settings: device picker
+  const setGrid = $("#set-device-grid");
+  if (setGrid) {
+    paintDeviceGrid(setGrid, state.settings.device || "auto", (code) => {
+      state.settings.device = code;
+      applyDeviceProfile(code, { toast: true });
+      saveState();
+      paintDeviceGrid(setGrid, code);
+    });
+  }
+
+  /* Shop tabs */
+  $$("#shop-tabs button").forEach(b => {
+    b.addEventListener("click", () => setShopTab(b.dataset.tab));
+  });
+  const claimBtn = $("#daily-claim-btn");
+  if (claimBtn) {
+    claimBtn.addEventListener("click", () => {
+      const amount = claimDaily();
+      if (amount == null) return;
+      renderDailyPanel();
+      refreshHexPill();
+      refreshDailyMenuCta();
+      /* Bounce the wallet pill so the increase is impossible to miss. */
+      document.querySelectorAll(".hex-pill").forEach(p => {
+        p.classList.remove("hex-pop");
+        // restart animation
+        void p.offsetWidth;
+        p.classList.add("hex-pop");
+      });
+    });
+  }
+}
+
+function renderAllText() {
+  applyI18n();
+  renderTasks();
+  renderLeaderboards();
+  renderAchievements();
+  renderMenu();
+  // sync dropdowns
+  if (loginLangDD) loginLangDD.setValue(state.settings.lang);
+  if (setLangDD) setLangDD.setValue(state.settings.lang);
+}
