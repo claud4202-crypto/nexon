@@ -16,6 +16,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 
+# Mirror the web payload into assets/ so the WebView can load it from
+# file:///android_asset/web/index.html at runtime.
+bash "$HERE/copy_assets.sh"
+
 : "${ANDROID_SDK_ROOT:?ANDROID_SDK_ROOT must be set}"
 BUILD_TOOLS_VER="${BUILD_TOOLS_VER:-34.0.0}"
 PLATFORM_VER="${PLATFORM_VER:-android-34}"
